@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0f172a">
+<title>إدارة ميزانيتي — تفعيل</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="vendor/tajawal.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;font-family:"Tajawal",sans-serif}
+  html,body{height:100%}
+  body{background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;padding:20px}
+  #boot{color:rgba(248,250,252,.6);font-size:15px}
+  #gate{width:100%;max-width:420px}
+  .logo{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,#4f46e5,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:28px;margin-bottom:20px;box-shadow:0 6px 20px rgba(79,70,229,.4)}
+  h1{font-size:26px;font-weight:800;margin-bottom:8px}
+  p.lead{color:rgba(248,250,252,.65);font-size:15px;line-height:1.7;margin-bottom:24px}
+  label{display:block;font-size:14px;font-weight:700;margin-bottom:8px}
+  input{width:100%;padding:14px 16px;border-radius:12px;border:1.5px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:20px;font-weight:700;letter-spacing:2px;text-align:center;direction:ltr;outline:none;font-family:ui-monospace,Menlo,Consolas,monospace}
+  input:focus{border-color:#818cf8;box-shadow:0 0 0 3px rgba(129,140,248,.25)}
+  button{width:100%;margin-top:14px;padding:14px;border:none;border-radius:12px;background:#4f46e5;color:#fff;font-size:16px;font-weight:800;cursor:pointer}
+  button:hover{background:#4338ca}
+  button:disabled{opacity:.6;cursor:wait}
+  #msg{min-height:24px;margin-top:14px;font-size:14px;line-height:1.6}
+  #msg.err{color:#fca5a5}
+  #msg.info{color:#a5b4fc}
+  .help{margin-top:22px;padding-top:16px;border-top:1px solid rgba(255,255,255,.1);font-size:13px;color:rgba(248,250,252,.5);line-height:1.7}
+</style>
+</head>
+<body>
+<div id="boot">جارٍ التحميل…</div>
+
+<main id="gate" hidden>
+  <div class="logo">💰</div>
+  <h1>فعّل نسختك</h1>
+  <p class="lead">أدخل كود التفعيل الذي وصلك بعد الشراء. التفعيل يتم مرة واحدة على كل جهاز، وبعدها يعمل النظام بدون إنترنت.</p>
+  <form id="form" autocomplete="off">
+    <label for="code">كود التفعيل</label>
+    <input id="code" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" required>
+    <button id="btn" type="submit">تفعيل</button>
+    <div id="msg" role="status"></div>
+  </form>
+  <div class="help" id="help"></div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var SUPPORT = "إنستغرام: mizania.app";
+  var DB = "bm_license_db", STORE = "kv";
+
+  /* ---------- تخزين محلي (IndexedDB) ---------- */
+  function openDb() {
+    return new Promise(function (res, rej) {
+      var r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore(STORE); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  function idbGet(k) {
+    return openDb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var q = db.transaction(STORE).objectStore(STORE).get(k);
+        q.onsuccess = function () { res(q.result); };
+        q.onerror = function () { rej(q.error); };
+      });
+    });
+  }
+  function idbSet(k, v) {
+    return openDb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).put(v, k);
+        tx.oncomplete = function () { res(); };
+        tx.onerror = function () { rej(tx.error); };
+      });
+    });
+  }
+  function idbDel(k) {
+    return openDb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).delete(k);
+        tx.oncomplete = function () { res(); };
+        tx.onerror = function () { rej(tx.error); };
+      });
+    });
+  }
+
+  /* ---------- معرّف الجهاز ---------- */
+  async function getDevice() {
+    var d = null;
+    try { d = localStorage.getItem("lic_device"); } catch (e) {}
+    if (!d) { try { d = await idbGet("device"); } catch (e) {} }
+    if (!d) d = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+    try { localStorage.setItem("lic_device", d); } catch (e) {}
+    try { await idbSet("device", d); } catch (e) {}
+    return d;
+  }
+
+  /* ---------- الاتصال بالخادم ---------- */
+  async function call(mode, code, device, timeoutMs) {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, timeoutMs || 15000);
+    try {
+      var r = await fetch("/api/unlock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: mode, code: code, device: device }),
+        cache: "no-store",
+        signal: ctrl.signal
+      });
+      var data = {};
+      try { data = await r.json(); } catch (e) {}
+      return { status: r.status, data: data };
+    } finally { clearTimeout(t); }
+  }
+
+  function messageFor(err) {
+    switch (err) {
+      case "revoked": return "تم إيقاف هذا الكود. تواصل مع الدعم.";
+      case "limit": return "وصل هذا الكود للحد الأقصى من الأجهزة. تواصل مع الدعم لإعادة التعيين.";
+      case "reset": return "تمت إعادة تعيين الأجهزة لهذا الكود. أدخل الكود مرة أخرى للتفعيل.";
+      default: return "الكود غير صحيح. تأكد من كتابته كما وصلك.";
+    }
+  }
+
+  /* ---------- تشغيل التطبيق ---------- */
+  function launch(html) {
+    document.open();
+    document.write(html);
+    document.close();
+  }
+
+  var gate = document.getElementById("gate");
+  var boot = document.getElementById("boot");
+  var form = document.getElementById("form");
+  var input = document.getElementById("code");
+  var btn = document.getElementById("btn");
+  var msg = document.getElementById("msg");
+  document.getElementById("help").textContent = "لم يصلك كود أو واجهتك مشكلة؟ تواصل معنا عبر " + SUPPORT;
+
+  function setMsg(text, kind) { msg.textContent = text || ""; msg.className = kind || "err"; }
+  function showGate(text) {
+    boot.hidden = true; gate.hidden = false;
+    if (text) setMsg(text);
+    input.focus();
+  }
+
+  input.addEventListener("input", function () {
+    var v = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16);
+    input.value = v.replace(/(.{4})(?=.)/g, "$1-");
+  });
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    var code = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 16) { setMsg("اكتب الكود كاملاً (16 خانة)."); return; }
+    btn.disabled = true;
+    setMsg("جارٍ التحقق…", "info");
+    try {
+      var device = await getDevice();
+      var r = await call("unlock", code, device, 20000);
+      if (r.status === 200 && r.data.html) {
+        var lic = { code: code, html: r.data.html, version: r.data.version };
+        try { await idbSet("license", lic); } catch (err) {}
+        launch(lic.html);
+        return;
+      }
+      setMsg(messageFor(r.data && r.data.error));
+    } catch (err) {
+      setMsg("تعذر الاتصال بالإنترنت. التفعيل لأول مرة يحتاج اتصالاً.");
+    }
+    btn.disabled = false;
+  });
+
+  async function start() {
+    var device = await getDevice();
+    var lic = null;
+    try { lic = await idbGet("license"); } catch (e) {}
+
+    if (lic && lic.html && lic.code) {
+      if (navigator.onLine !== false) {
+        try {
+          var v = await call("verify", lic.code, device, 3500);
+          if (v.status === 200 && v.data.ok) {
+            if (v.data.version !== lic.version) {
+              var f = await call("unlock", lic.code, device, 15000);
+              if (f.status === 200 && f.data.html) {
+                lic = { code: lic.code, html: f.data.html, version: f.data.version };
+                try { await idbSet("license", lic); } catch (e) {}
+              }
+            }
+          } else if (v.status === 403) {
+            try { await idbDel("license"); } catch (e) {}
+            showGate(messageFor(v.data && v.data.error));
+            return;
+          }
+        } catch (e) { /* بدون إنترنت أو بطيء: نفتح النسخة المخزّنة */ }
+      }
+      launch(lic.html);
+      return;
+    }
+    showGate();
+  }
+
+  start().catch(function () { showGate(); });
+})();
+</script>
+</body>
+</html>

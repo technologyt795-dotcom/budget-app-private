@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>إدارة الأكواد</title>
+<link rel="stylesheet" href="vendor/tajawal.css">
+<style>
+  *{box-sizing:border-box;font-family:"Tajawal",sans-serif}
+  body{margin:0;background:#f1f5f9;color:#0f172a;padding:20px;max-width:900px;margin-inline:auto}
+  h1{font-size:24px;margin-bottom:16px}
+  .box{background:#fff;border-radius:14px;padding:18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  label{display:block;font-size:13px;font-weight:700;margin-bottom:4px;color:#475569}
+  input{padding:9px 12px;border:1.5px solid #e2e8f0;border-radius:9px;font-size:14px}
+  button{padding:9px 16px;border:none;border-radius:9px;background:#4f46e5;color:#fff;font-weight:700;cursor:pointer;font-size:14px}
+  button.sec{background:#e2e8f0;color:#0f172a}
+  button.red{background:#fee2e2;color:#b91c1c}
+  button.sm{padding:5px 10px;font-size:12px}
+  textarea{width:100%;height:140px;margin-top:10px;padding:10px;border:1.5px solid #e2e8f0;border-radius:9px;direction:ltr;font-family:ui-monospace,Consolas,monospace;font-size:14px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px;text-align:right;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+  td.code{font-family:ui-monospace,Consolas,monospace;direction:ltr;text-align:left}
+  .wrap{overflow-x:auto}
+  #status{margin:8px 0;font-size:14px;min-height:22px}
+  .bad{color:#b91c1c}.ok{color:#15803d}
+</style>
+</head>
+<body>
+<h1>إدارة أكواد التفعيل</h1>
+
+<div class="box">
+  <label for="key">مفتاح الإدارة (ADMIN_KEY)</label>
+  <input id="key" type="password" style="width:100%" autocomplete="off">
+</div>
+
+<div class="box">
+  <div class="row">
+    <div><label for="count">عدد الأكواد</label><input id="count" type="number" value="10" min="1" max="200" style="width:90px"></div>
+    <div><label for="maxd">أقصى عدد أجهزة</label><input id="maxd" type="number" value="3" min="1" max="10" style="width:90px"></div>
+    <div><label for="note">ملاحظة (اختياري)</label><input id="note" placeholder="مثال: دفعة نوفمبر"></div>
+    <button id="create">إنشاء أكواد</button>
+    <button id="list" class="sec">تحديث القائمة</button>
+  </div>
+  <textarea id="out" readonly placeholder="الأكواد الجديدة تظهر هنا، انسخها وأرسل كل كود لمشترٍ واحد فقط"></textarea>
+  <button id="copy" class="sec" style="margin-top:8px">نسخ الكل</button>
+</div>
+
+<div id="status"></div>
+<div class="box wrap">
+  <table>
+    <thead><tr><th>الكود</th><th>ملاحظة</th><th>الأجهزة</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function say(t, ok) { $("status").textContent = t || ""; $("status").className = ok ? "ok" : "bad"; }
+
+  async function api(body) {
+    var r = await fetch("/api/admin", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-admin-key": $("key").value.trim() },
+      body: JSON.stringify(body)
+    });
+    var d = {};
+    try { d = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error(d.error === "unauthorized" ? "المفتاح غير صحيح" : (d.error || "خطأ " + r.status));
+    return d;
+  }
+
+  async function load() {
+    try {
+      var d = await api({ action: "list" });
+      $("rows").innerHTML = d.items.map(function (i) {
+        return "<tr><td class='code'>" + esc(i.code) + "</td><td>" + esc(i.note) + "</td><td>" + i.devices + " / " + i.maxDevices +
+          "</td><td>" + (i.revoked ? "<span class='bad'>موقوف</span>" : "<span class='ok'>فعّال</span>") + "</td><td>" +
+          (i.revoked ? "<button class='sm sec' data-a='restore' data-c='" + esc(i.code) + "'>تفعيل</button> " : "<button class='sm red' data-a='revoke' data-c='" + esc(i.code) + "'>إيقاف</button> ") +
+          "<button class='sm sec' data-a='reset' data-c='" + esc(i.code) + "'>تصفير الأجهزة</button></td></tr>";
+      }).join("");
+      say(d.items.length + " كود", true);
+    } catch (e) { say(e.message); }
+  }
+
+  $("create").onclick = async function () {
+    try {
+      var d = await api({ action: "create", count: $("count").value, maxDevices: $("maxd").value, note: $("note").value });
+      $("out").value = d.codes.join("\n");
+      say("تم إنشاء " + d.codes.length + " كود", true);
+      load();
+    } catch (e) { say(e.message); }
+  };
+  $("list").onclick = load;
+  $("copy").onclick = function () { $("out").select(); document.execCommand("copy"); say("تم النسخ", true); };
+  $("rows").onclick = async function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    try { await api({ action: b.dataset.a, code: b.dataset.c }); load(); } catch (err) { say(err.message); }
+  };
+})();
+</script>
+</body>
+</html>
